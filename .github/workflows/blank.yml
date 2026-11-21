@@ -1,3 +1,4 @@
+
 name: RDP
 
 on:
@@ -64,6 +65,66 @@ jobs:
               Write-Error "User creation failed"
               exit 1
           }
+
+      # ==========================================
+      # ADDED 1: ACTUAL PAGING FILE CONFIGURATION
+      # ==========================================
+      - name: Configure Paging File System
+        run: |
+          Write-Host "Configuring system-managed virtual memory..."
+
+          $Computer = Get-CimInstance Win32_ComputerSystem
+
+          Set-CimInstance -InputObject $Computer -Property @{
+              AutomaticManagedPagefile = $true
+          }
+
+          $Check = Get-CimInstance Win32_ComputerSystem
+
+          Write-Host "AutomaticManagedPagefile: $($Check.AutomaticManagedPagefile)"
+          Write-Host "System-managed paging file configured!"
+
+      # ==========================================
+      # ADDED 2: POPUP EVERY RDP USER LOGIN
+      # ==========================================
+      - name: Configure Paging Warning Popup
+        run: |
+          $PopupScript = "$env:ProgramData\RDP-PagingWarning.ps1"
+
+          $PopupCode = @'
+          Add-Type -AssemblyName System.Windows.Forms
+
+          [System.Windows.Forms.MessageBox]::Show(
+              "Windows created a temporary paging file on your computer because of a problem that occurred with your paging file configuration when you started your computer. The total paging file size for all disk drives may be somewhat larger than the size you specified.",
+              "System Properties",
+              [System.Windows.Forms.MessageBoxButtons]::OK,
+              [System.Windows.Forms.MessageBoxIcon]::Information
+          ) | Out-Null
+          '@
+
+          Set-Content -LiteralPath $PopupScript -Value $PopupCode -Encoding UTF8
+
+          $RDPUser = "$env:COMPUTERNAME\RDP"
+
+          $Action = New-ScheduledTaskAction `
+              -Execute "powershell.exe" `
+              -Argument "-NoProfile -STA -ExecutionPolicy Bypass -File `"$PopupScript`""
+
+          $Trigger = New-ScheduledTaskTrigger -AtLogOn -User $RDPUser
+
+          $Principal = New-ScheduledTaskPrincipal `
+              -UserId $RDPUser `
+              -LogonType Interactive `
+              -RunLevel Limited
+
+          Register-ScheduledTask `
+              -TaskName "RDP Paging Warning" `
+              -Action $Action `
+              -Trigger $Trigger `
+              -Principal $Principal `
+              -Force
+
+          Write-Host "Paging warning popup configured for RDP login!"
 
       - name: Install Tailscale
         run: |
